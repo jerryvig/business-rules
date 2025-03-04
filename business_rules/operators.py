@@ -1,70 +1,79 @@
 import inspect
 import re
+from datetime import date, datetime
 from functools import wraps
 from six import string_types, integer_types
 
-from .fields import (FIELD_TEXT, FIELD_NUMERIC, FIELD_NO_INPUT,
-                     FIELD_SELECT, FIELD_SELECT_MULTIPLE)
+from .fields import (
+    FIELD_TEXT,
+    FIELD_NUMERIC,
+    FIELD_NO_INPUT,
+    FIELD_SELECT,
+    FIELD_SELECT_MULTIPLE,
+    FIELD_DATETIME,
+)
 from .utils import fn_name_to_pretty_label, float_to_decimal
-from decimal import Decimal, Inexact, Context
+from decimal import Decimal
+
 
 class BaseType(object):
     def __init__(self, value):
         self.value = self._assert_valid_value_and_cast(value)
 
     def _assert_valid_value_and_cast(self, value):
-        raise NotImplemented()
+        raise NotImplementedError()
 
     @classmethod
     def get_all_operators(cls):
         methods = inspect.getmembers(cls)
-        return [{'name': m[0],
-                 'label': m[1].label,
-                 'input_type': m[1].input_type}
-                for m in methods if getattr(m[1], 'is_operator', False)]
+        return [
+            {"name": m[0], "label": m[1].label, "input_type": m[1].input_type}
+            for m in methods
+            if getattr(m[1], "is_operator", False)
+        ]
 
 
 def export_type(cls):
-    """ Decorator to expose the given class to business_rules.export_rule_data. """
+    """Decorator to expose the given class to business_rules.export_rule_data."""
     cls.export_in_rule_data = True
     return cls
 
 
-def type_operator(input_type, label=None,
-                  assert_type_for_arguments=True):
-    """ Decorator to make a function into a type operator.
+def type_operator(input_type, label=None, assert_type_for_arguments=True):
+    """Decorator to make a function into a type operator.
 
     - assert_type_for_arguments - if True this patches the operator function
       so that arguments passed to it will have _assert_valid_value_and_cast
       called on them to make type errors explicit.
     """
+
     def wrapper(func):
         func.is_operator = True
-        func.label = label \
-            or fn_name_to_pretty_label(func.__name__)
+        func.label = label or fn_name_to_pretty_label(func.__name__)
         func.input_type = input_type
 
         @wraps(func)
         def inner(self, *args, **kwargs):
             if assert_type_for_arguments:
                 args = [self._assert_valid_value_and_cast(arg) for arg in args]
-                kwargs = dict((k, self._assert_valid_value_and_cast(v))
-                              for k, v in kwargs.items())
+                kwargs = dict(
+                    (k, self._assert_valid_value_and_cast(v)) for k, v in kwargs.items()
+                )
             return func(self, *args, **kwargs)
+
         return inner
+
     return wrapper
 
 
 @export_type
 class StringType(BaseType):
-
     name = "string"
 
     def _assert_valid_value_and_cast(self, value):
         value = value or ""
         if not isinstance(value, string_types):
-            raise AssertionError("{0} is not a valid string type.".
-                                 format(value))
+            raise AssertionError("{0} is not a valid string type.".format(value))
         return value
 
     @type_operator(FIELD_TEXT)
@@ -98,7 +107,7 @@ class StringType(BaseType):
 
 @export_type
 class NumericType(BaseType):
-    EPSILON = Decimal('0.000001')
+    EPSILON = Decimal("0.000001")
 
     name = "numeric"
 
@@ -112,8 +121,7 @@ class NumericType(BaseType):
         if isinstance(value, Decimal):
             return value
         else:
-            raise AssertionError("{0} is not a valid numeric type.".
-                                 format(value))
+            raise AssertionError("{0} is not a valid numeric type.".format(value))
 
     @type_operator(FIELD_NUMERIC)
     def equal_to(self, other_numeric):
@@ -138,13 +146,11 @@ class NumericType(BaseType):
 
 @export_type
 class BooleanType(BaseType):
-
     name = "boolean"
 
     def _assert_valid_value_and_cast(self, value):
-        if type(value) != bool:
-            raise AssertionError("{0} is not a valid boolean type".
-                                 format(value))
+        if type(value) is not bool:
+            raise AssertionError("{0} is not a valid boolean type".format(value))
         return value
 
     @type_operator(FIELD_NO_INPUT)
@@ -155,22 +161,22 @@ class BooleanType(BaseType):
     def is_false(self):
         return not self.value
 
+
 @export_type
 class SelectType(BaseType):
-
     name = "select"
 
     def _assert_valid_value_and_cast(self, value):
-        if not hasattr(value, '__iter__'):
-            raise AssertionError("{0} is not a valid select type".
-                                 format(value))
+        if not hasattr(value, "__iter__"):
+            raise AssertionError("{0} is not a valid select type".format(value))
         return value
 
     @staticmethod
     def _case_insensitive_equal_to(value_from_list, other_value):
-        if isinstance(value_from_list, string_types) and \
-                isinstance(other_value, string_types):
-                    return value_from_list.lower() == other_value.lower()
+        if isinstance(value_from_list, string_types) and isinstance(
+            other_value, string_types
+        ):
+            return value_from_list.lower() == other_value.lower()
         else:
             return value_from_list == other_value
 
@@ -191,13 +197,13 @@ class SelectType(BaseType):
 
 @export_type
 class SelectMultipleType(BaseType):
-
     name = "select_multiple"
 
     def _assert_valid_value_and_cast(self, value):
-        if not hasattr(value, '__iter__'):
-            raise AssertionError("{0} is not a valid select multiple type".
-                                 format(value))
+        if not hasattr(value, "__iter__"):
+            raise AssertionError(
+                "{0} is not a valid select multiple type".format(value)
+            )
         return value
 
     @type_operator(FIELD_SELECT_MULTIPLE)
@@ -235,3 +241,73 @@ class SelectMultipleType(BaseType):
     @type_operator(FIELD_SELECT_MULTIPLE)
     def shares_no_elements_with(self, other_value):
         return not self.shares_at_least_one_element_with(other_value)
+
+
+@export_type
+class DateTimeType(BaseType):
+    name = "datetime"
+    DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S"
+    DATE_FORMAT = "%Y-%m-%d"
+
+    def _assert_valid_value_and_cast(self, value):
+        """
+        Parse string with formats '%Y-%m-%dT%H:%M:%S' or '%Y-%m-%d' into
+        datetime.datetime instance.
+
+        :param value:
+        :return:
+        """
+        if isinstance(value, datetime):
+            return value
+
+        if isinstance(value, date):
+            return datetime(value.year, value.month, value.day)
+
+        try:
+            return datetime.strptime(value, self.DATETIME_FORMAT)
+        except (ValueError, TypeError):
+            pass
+
+        try:
+            return datetime.strptime(value, self.DATE_FORMAT)
+        except (ValueError, TypeError):
+            raise AssertionError("{0} is not a valid datetime type.".format(value))
+
+    def _set_timezone_if_different(self, variable_datetime, condition_value_datetime):
+        # type: (datetime, datetime) -> datetime
+        if variable_datetime.tzinfo is None:
+            if condition_value_datetime.tzinfo is None:
+                return condition_value_datetime
+            else:
+                return condition_value_datetime.replace(tzinfo=None)
+
+        return condition_value_datetime.replace(tzinfo=variable_datetime.tzinfo)
+
+    @type_operator(FIELD_DATETIME)
+    def equal_to(self, other_datetime):
+        # type: (datetime) -> bool
+        other_datetime = self._set_timezone_if_different(self.value, other_datetime)
+
+        return self.value == other_datetime
+
+    @type_operator(FIELD_DATETIME)
+    def after_than(self, other_datetime):
+        # type: (datetime) -> bool
+        other_datetime = self._set_timezone_if_different(self.value, other_datetime)
+
+        return self.value > other_datetime
+
+    @type_operator(FIELD_DATETIME)
+    def after_than_or_equal_to(self, other_datetime):
+        return self.after_than(other_datetime) or self.equal_to(other_datetime)
+
+    @type_operator(FIELD_DATETIME)
+    def before_than(self, other_datetime):
+        # type: (datetime) -> bool
+        other_datetime = self._set_timezone_if_different(self.value, other_datetime)
+
+        return self.value < other_datetime
+
+    @type_operator(FIELD_DATETIME)
+    def before_than_or_equal_to(self, other_datetime):
+        return self.before_than(other_datetime) or self.equal_to(other_datetime)
