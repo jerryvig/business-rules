@@ -1,6 +1,7 @@
 from business_rules.operators import BaseType, type_operator
 from unittest import TestCase
-from mock import MagicMock
+from unittest.mock import MagicMock
+
 
 class OperatorsClassTests(TestCase):
     """ Test methods on classes that inherit from BaseType.
